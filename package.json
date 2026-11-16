@@ -1,0 +1,1 @@
+{"description":"A fast, accessible frontend for make.fun: live bounties, bounty pages, leaderboards and public profiles, from static files reading make.fun's public API.","license":"MIT","name":"makefun-frontend-01","scripts":{"build":"node main.ts","serve":"node serve.ts"},"type":"module","version":"1.0.0"}
