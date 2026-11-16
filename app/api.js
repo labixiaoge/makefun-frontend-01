@@ -1,78 +1,68 @@
 // make.fun's public API: read-only GET requests, open to any origin (CORS).
 // The full API is described at https://make.fun/api/openapi.json.
-// Every answer is cached in memory and revalidated with its ETag: the API's
-// ETags are bound to the minute, so a revalidation inside the same minute
-// answers 304 and costs no download. A view never refetches while its data
-// is fresh, and filters run on the cached list instead of the network.
+//
+// Every request goes through one cache: a response stays fresh for 30 s,
+// an ETag answer of 304 reuses the stored body, and identical requests in
+// flight share a single fetch, so a re-visit inside the minute costs one
+// conditional request at most and a re-render costs nothing.
 
 const API = 'https://make.fun/api';
-const CACHE_TTL_MS = 60000;
-const PAGE_LIMIT = 100;
+const FRESH_MS = 30_000;
 
+/** url -> { at, etag, body } of the last good answer. */
 const cache = new Map();
+/** url -> the fetch already running for it. */
+const inflight = new Map();
 
-/** One GET, cached and revalidated with ETag. Throws {status} on HTTP errors. */
-export async function fetchCached(path, ttlMs = CACHE_TTL_MS) {
+async function get(path) {
+  const url = API + path;
   const now = Date.now();
-  const hit = cache.get(path);
-  if (hit && now - hit.at < ttlMs) return hit.data;
-  const headers = {};
-  if (hit && hit.etag) headers['If-None-Match'] = hit.etag;
-  const res = await fetch(API + path, { headers });
-  if (res.status === 304 && hit) {
-    hit.at = now;
-    return hit.data;
+  const hit = cache.get(url);
+  if (hit && now - hit.at < FRESH_MS) return hit.body;
+  if (inflight.has(url)) return inflight.get(url);
+  const job = (async () => {
+    const headers = {};
+    if (hit?.etag) headers['if-none-match'] = hit.etag;
+    let res;
+    try {
+      res = await fetch(url, { headers });
+    } catch (err) {
+      throw new Error(`could not reach make.fun (${err.message})`);
+    }
+    if (res.status === 304 && hit) {
+      hit.at = now;
+      return hit.body;
+    }
+    if (!res.ok) {
+      const err = new Error(`make.fun answered ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    const etag = res.headers.get('etag');
+    const body = await res.json();
+    cache.set(url, { at: now, etag, body });
+    return body;
+  })();
+  inflight.set(url, job);
+  try {
+    return await job;
+  } finally {
+    inflight.delete(url);
   }
-  if (!res.ok) {
-    const error = new Error(`make.fun API ${res.status} for ${path}`);
-    error.status = res.status;
-    throw error;
-  }
-  const data = await res.json();
-  cache.set(path, { data, etag: res.headers.get('etag'), at: now });
-  return data;
 }
 
-/** A list endpoint that pages with next_cursor, followed until it ends. */
-export async function fetchAllPages(path) {
-  const items = [];
-  let cursor = null;
-  for (let page = 0; page < 20; page++) {
-    const url = cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}` : path;
-    const data = await fetchCached(url);
-    const list = Array.isArray(data) ? data : data.items || [];
-    items.push(...list);
-    cursor = Array.isArray(data) ? null : data.next_cursor || null;
-    if (!cursor) break;
-  }
-  return items;
-}
-
-/** The bounty board: open bounties, or every bounty when status is 'all'.
- *  The API's statuses are open and resolved only: 'closed' means resolved. */
-export const listBounties = (status = 'open') =>
-  status === 'all'
-    ? Promise.all([fetchAllPages('/competitions?status=open&activity=times'), fetchAllPages('/competitions?status=resolved&activity=times')]).then(([a, b]) => [...a, ...b])
-    : fetchAllPages(`/competitions?status=${status === 'closed' ? 'resolved' : status}&activity=times`);
+/** The open bounties: { items: [...] } (activity=times leaves out the activity a board does not show). */
+export const getBounties = () => get('/competitions?status=open&activity=times');
 
 /** One bounty, by its slug. */
-export const getBounty = (slug) => fetchCached(`/competitions/${encodeURIComponent(slug)}`);
+export const getBounty = (slug) => get(`/competitions/${encodeURIComponent(slug)}`);
 
-/** A bounty's leaderboard: { competition, phase, views, columns, entries }. */
-export const getLeaderboard = (slug, view) =>
-  fetchCached(`/competitions/${encodeURIComponent(slug)}/leaderboard${view ? `?view=${encodeURIComponent(view)}` : ''}`);
+/** A bounty's leaderboard: { competition, phase, view, views, columns, entries }. */
+export const getLeaderboard = (slug, view = 'performance') =>
+  get(`/competitions/${encodeURIComponent(slug)}/leaderboard?view=${encodeURIComponent(view)}`);
 
-/** A bounty's entries, newest first. */
-export const listSubmissions = (slug) => fetchAllPages(`/competitions/${encodeURIComponent(slug)}/submissions?limit=${PAGE_LIMIT}`);
+/** A person's public profile, by handle. */
+export const getProfile = (handle) => get(`/profiles/${encodeURIComponent(handle)}`);
 
-/** An account's public profile, by its handle. */
-export const getProfile = (handle) => fetchCached(`/profiles/${encodeURIComponent(handle)}`);
-
-/** The site-wide rankings, by wins or by payout. */
-export const getRankings = (order = 'wins') => fetchCached(`/rankings?limit=50&order=${encodeURIComponent(order)}`);
-
-/** The newest entries whose grade has finished, across the site. */
-export const getLatestEntries = () => fetchCached('/activity/entries/latest');
-
-/** Site totals: entries, lines of code, tokens burned, prizes paid. */
-export const getSiteStats = () => fetchCached('/activity/stats');
+/** A person's ranking summary, by handle. */
+export const getRankings = (handle) => get(`/rankings/${encodeURIComponent(handle)}`);

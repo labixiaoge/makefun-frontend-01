@@ -3,25 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A fast, accessible frontend for make.fun: live bounties with rewards, entry fees and time left, bounty pages, leaderboards and public profiles.">
-<title>make.fun — bounties, leaderboards &amp; profiles</title>
+<meta name="description" content="A fast frontend for make.fun bounties: the open board, every bounty, leaderboards and profiles.">
+<title>make.fun bounties</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <script type="module" src="main.js"></script>
 </head>
 <body>
-<a class="skip" href="#app">Skip to content</a>
 <header class="top">
-  <a class="brand" href="#/">make.fun</a>
-  <nav aria-label="Main">
-    <a href="#/">Bounties</a>
-    <a href="#/rankings">Rankings</a>
-    <a href="#/latest">Latest entries</a>
-  </nav>
+  <a class="brand" href="#/">make<span>.</span>fun <em>bounties</em></a>
+  <nav><a href="#/">Board</a><a href="#/leaderboard/makefun-frontend-01">Leaderboard</a></nav>
+  <form class="handle-search" id="handle-search"><input type="search" placeholder="Find a profile…" aria-label="Find a profile by handle" name="handle"><button type="submit">Go</button></form>
 </header>
-<main id="app" tabindex="-1"></main>
-<footer>
-  <p>Unofficial frontend. Data: make.fun public API, read live. No sign-in, no tracking.</p>
-</footer>
-<noscript><p class="notice">This frontend needs JavaScript: it reads make.fun's public API in your browser.</p></noscript>
+<main id="app"><p>Loading…</p></main>
+<footer>Data from <a href="https://make.fun/" target="_blank" rel="noopener">make.fun</a>’s public API, read live. Not affiliated with make.fun.</footer>
+<script>
+document.getElementById('handle-search').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const h = new FormData(e.target).get('handle').trim();
+  if (h) location.hash = '#/u/' + encodeURIComponent(h);
+});
+</script>
 </body>
 </html>
