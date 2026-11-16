@@ -1,19 +1,15 @@
-// A working makefun-frontend-01 entry (Node 22, standard library only): the frontend is this directory's app/
-// folder, plain static files a browser opens at app/index.html (ES modules, CSS, no build step), reading make.fun's
-// public API at https://make.fun/api. The program hands it in: it copies app/ and screenshots/ from beside this file
-// to /output and writes /output/dossier.json, the summary the judge reads (your screenshots, the first load's files
-// and bytes, and your source), with the vendored make.fun library. Leave vendor/makefun-frontend.ts as it is: the
-// scorer requires dossier.json to be byte for byte what its own copy writes.
+// The make.fun frontend's hand-in program (Node 22, standard library only):
+// it copies app/ and screenshots/ from beside this file to /output and writes
+// /output/dossier.json, the summary the judge reads (the screenshots, the
+// first load's files and bytes, and the source), with the vendored make.fun
+// library. Leave vendor/makefun-frontend.ts as it is: the scorer requires
+// dossier.json to be byte for byte what its own copy writes.
 //
-// A starting point, not a winner: a plain board of open bounties and a page for each. Build your frontend in app/
-// (a leaderboard, profiles, speed, ease of use), put 3 PNG or JPEG screenshots of it running on live data in
-// screenshots/ (the first by name is the cover; shots.json says which views this starter's were taken of), and run it.
-//
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
+// Serve the app locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-frontend.ts';
@@ -21,10 +17,16 @@ import { buildDossier } from './vendor/makefun-frontend.ts';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
+// Fail early, with a plain message, when a file the entry needs is missing.
+for (const needed of ['app/index.html', 'app/main.js', 'app/api.js', 'app/format.js', 'app/views.js', 'app/style.css', 'screenshots/1-board.jpg', 'screenshots/2-bounty.jpg', 'screenshots/3-leaderboard.jpg']) {
+  if (!existsSync(join(here, needed))) throw new Error(`missing ${needed}: run the screenshot step before handing in`);
+}
+if (readdirSync(join(here, 'screenshots')).length !== 3) throw new Error('screenshots/: exactly 3 images, no more');
+
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
 // The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
 // scorer would refuse (more than 3 screenshots or one over 256 KiB; more than 993 files and directories in app/ or
