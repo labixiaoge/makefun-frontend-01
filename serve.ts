@@ -1,9 +1,8 @@
-// A tiny static server for app/ (Node 22, standard library only), for local
-// development: `node serve.ts` serves app/ on http://localhost:8080
-// (`--port <n>` for another port). It sends the MIME types a browser needs,
-// refuses any path outside app/, and does nothing else: a dev convenience,
-// not a web server for the internet.
-
+// A tiny static server for app/ (Node 22, standard library only), so the frontend
+// can be run locally without a build step: `node serve.ts` serves app/ on
+// http://localhost:8080 (`--port <n>` for another port). It sends the MIME types a
+// browser needs, refuses any path outside app/, and otherwise does nothing clever:
+// this is a development convenience, not a web server for the internet.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
@@ -12,8 +11,8 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('./app', import.meta.url)));
 const args = process.argv.slice(2);
 const portIndex = args.indexOf('--port');
-const wanted = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
-const port = Number.isInteger(wanted) && wanted > 0 && wanted < 65536 ? wanted : 8080;
+const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
+const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -27,6 +26,8 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json',
 };
 
 createServer((request, response) => {
