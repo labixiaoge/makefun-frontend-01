@@ -1,178 +1,160 @@
-// The four surfaces, each a function from API data to HTML. All links are
-// plain anchors, so every surface is reachable by a link and by its own URL.
+// The pages, each a function from API data to HTML. Every value from the API is escaped
+// before it reaches the page, and every link is a hash route, so each surface has its own URL.
 
-import { ago, date, esc, money, plural, timeLeft } from './format.js';
+import { date, esc, money, num, shortWallet, timeLeft } from './format.js';
 
-/** A bounty description as HTML: escaped first, then the small markdown
- *  most descriptions use (## headings, - lists, **bold**) is rendered.
- *  Anything else stays plain text, so no markup can sneak through. */
-function md(text) {
-  const lines = esc(text).split('\n');
-  const out = [];
-  let inList = false;
-  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
-  for (const line of lines) {
-    const h = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (h) {
-      closeList();
-      const level = Math.min(3, h[1].length) + 1;
-      out.push(`<h${level}>${inline(h[2])}</h${level}>`);
-      continue;
-    }
-    const item = /^[-*]\s+(.*)$/.exec(line);
-    if (item) {
-      if (!inList) { out.push('<ul>'); inList = true; }
-      out.push(`<li>${inline(item[1])}</li>`);
-      continue;
-    }
-    closeList();
-    if (line.trim() !== '') out.push(`<p>${inline(line)}</p>`);
-  }
-  closeList();
-  return out.join('\n');
-}
-
-/** Inline markdown inside one escaped line: **bold** and `code`. */
-function inline(text) {
-  return text
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>');
-}
-
-/** The reward as it stands now: the live pot plus any entry fees paid into it. */
+/** The reward as it stands now: the live pot when the bounty has one, else its prize. */
 const pot = (b) => money(b.potUsd ?? b.rewardAmount);
 
 /** The entry fee, when the bounty charges one. */
-const fee = (b) => (b.entryFeeUsd ? `${money(b.entryFeeUsd)} fee` : 'free');
+const fee = (b) => (Number(b.entryFeeUsd) > 0 ? `${money(b.entryFeeUsd)} entry` : 'free entry');
 
-/** One board row: title, pot, fee, time left, entries, category. */
-function row(b) {
-  return `<li>
-    <a class="title" href="#/bounty/${encodeURIComponent(b.slug)}">${esc(b.title)}</a>
-    <span class="pot">${pot(b)}</span>
-    <span class="fee">${fee(b)}</span>
-    <span class="left">${timeLeft(b.deadline)}</span>
-    <span class="count">${plural(b.submissionCount ?? 0, 'entry', 'entries')}</span>
-    <span class="cat">${esc(b.category ?? '')}</span>
-  </li>`;
-}
+/** A stale-data note, shown when the page is rendering the last good answer after a failed fetch. */
+const staleNote = (fromCache) =>
+  fromCache ? '<p class="stale" role="status">Showing the last saved copy — make.fun did not answer just now.</p>' : '';
 
-/**
- * The board. `data` is the competitions list; `opts` carries the current
- * sort key and the search text, so the view is a pure function of both.
- */
-export function board(data, opts = {}) {
-  const items = [...(data.items ?? [])];
-  const q = (opts.q ?? '').trim().toLowerCase();
-  const filtered = q
-    ? items.filter((b) => `${b.title} ${b.slug} ${b.category ?? ''} ${b.description ?? ''}`.toLowerCase().includes(q))
-    : items;
-  const sort = opts.sort ?? 'pot';
-  filtered.sort((a, b) => {
-    if (sort === 'deadline') return new Date(a.deadline) - new Date(b.deadline);
-    if (sort === 'entries') return (b.submissionCount ?? 0) - (a.submissionCount ?? 0);
-    return (b.potUsd ?? b.rewardAmount ?? 0) - (a.potUsd ?? a.rewardAmount ?? 0);
-  });
-  const rows = filtered.map(row).join('');
-  return `<h1>Open bounties</h1>
-  <form class="controls" role="search" action="#/" onsubmit="return false">
-    <label>Search <input type="search" name="q" value="${esc(opts.q ?? '')}" placeholder="title, slug or category" aria-label="Search bounties"></label>
-    <label>Sort
-      <select name="sort" aria-label="Sort bounties">
-        <option value="pot"${sort === 'pot' ? ' selected' : ''}>Biggest pot</option>
-        <option value="deadline"${sort === 'deadline' ? ' selected' : ''}>Ending soonest</option>
-        <option value="entries"${sort === 'entries' ? ' selected' : ''}>Most entries</option>
-      </select>
-    </label>
-  </form>
-  <p class="meta">${filtered.length} of ${items.length} open bounties</p>
-  <ul class="board">${rows || '<li class="empty">No bounties match.</li>'}</ul>`;
-}
-
-/** One bounty: facts, description, and a link to its leaderboard. */
-export function bounty(b) {
+/** The board: every open bounty, with its live pot, fee, time left and entry count. */
+export function board(data, fromCache) {
+  const items = [...(data.items ?? [])].sort((a, b) => new Date(a.deadline) - new Date(b.deadline));
+  const rows = items
+    .map(
+      (b) => `
+      <li>
+        <a class="title" href="#/bounty/${encodeURIComponent(b.slug)}">${esc(b.title)}</a>
+        <span class="pot">${pot(b)}</span>
+        <span class="fee">${fee(b)}</span>
+        <span class="left">${timeLeft(b.deadline)}</span>
+        <span class="count">${num(b.submissionCount)} ${b.submissionCount === 1 ? 'entry' : 'entries'}</span>
+      </li>`,
+    )
+    .join('');
   return `
-  <p><a href="#/">&larr; All bounties</a></p>
-  <h1>${esc(b.title)}</h1>
-  <p class="summary">${esc(b.summary ?? b.description ?? '')}</p>
-  <dl>
-    <dt>Reward</dt><dd>${pot(b)}</dd>
-    ${b.entryFeeUsd ? `<dt>Entry fee</dt><dd>${money(b.entryFeeUsd)}</dd>` : '<dt>Entry fee</dt><dd>Free</dd>'}
-    <dt>Deadline</dt><dd>${date(b.deadline)} (${timeLeft(b.deadline)})</dd>
-    <dt>Entries</dt><dd>${b.submissionCount ?? 0}</dd>
-    ${b.category ? `<dt>Category</dt><dd>${esc(b.category)}</dd>` : ''}
-    ${b.sponsor?.name ? `<dt>Sponsor</dt><dd>${esc(b.sponsor.name)}</dd>` : ''}
-  </dl>
-  <p><a class="button" href="#/bounty/${encodeURIComponent(b.slug)}/leaderboard">Leaderboard &rarr;</a>
-  <a class="button" href="https://make.fun/bounty/${encodeURIComponent(b.slug)}">Open on make.fun &rarr;</a></p>
-  ${b.description ? `<h2>Description</h2><div class="description">${md(b.description)}</div>` : ''}`;
+    <h1>Open bounties</h1>
+    <p class="lede">${items.length} open — sorted by deadline, soonest first.</p>
+    ${staleNote(fromCache)}
+    <p><label>Filter <input id="filter" type="search" placeholder="Search bounties…" aria-label="Filter bounties"></label></p>
+    <ul class="board" id="board">${rows}</ul>`;
 }
 
-/** A leaderboard table. Rows carry their score under values[rank_key] (usually `judge`) and their entry title. */
-export function leaderboard(data, slug) {
-  const rows = data.rows ?? data.entries ?? data.leaderboard ?? [];
-  const title = data.competition?.title ?? slug;
-  const rankKey = data.rank_key ?? 'judge';
-  const body = rows
-    .map((r, i) => {
-      const rank = r.rank ?? i + 1;
-      const agent = r.agent?.handle ?? r.handle ?? r.agent ?? '—';
-      const score = r.values?.[rankKey] ?? r.values?.judge ?? r.score ?? r.value ?? '';
-      const detail = r.title ?? r.detail ?? r.note ?? '';
+/** One bounty: its reward, fee, deadline, entries, description, and a link to its leaderboard. */
+export function bounty(b, fromCache) {
+  const skills = (b.skills ?? []).map((s) => `<li>${esc(s)}</li>`).join('');
+  return `
+    <p><a href="#/">&larr; All bounties</a></p>
+    <h1>${esc(b.title)}</h1>
+    <p class="lede">${esc(b.summary ?? '')}</p>
+    ${staleNote(fromCache)}
+    <dl>
+      <dt>Reward</dt><dd>${pot(b)}</dd>
+      <dt>Entry fee</dt><dd>${Number(b.entryFeeUsd) > 0 ? money(b.entryFeeUsd) : 'Free'}</dd>
+      <dt>Deadline</dt><dd>${date(b.deadline)} (${timeLeft(b.deadline)})</dd>
+      <dt>Entries</dt><dd>${num(b.submissionCount)}</dd>
+      <dt>Status</dt><dd>${esc(b.status ?? '')}</dd>
+      ${b.category ? `<dt>Category</dt><dd>${esc(b.category)}</dd>` : ''}
+    </dl>
+    ${skills ? `<h2>Skills</h2><ul class="tags">${skills}</ul>` : ''}
+    <p><a class="button" href="#/bounty/${encodeURIComponent(b.slug)}/leaderboard">See the leaderboard &rarr;</a></p>
+    <h2>Description</h2>
+    <div class="description">${esc(b.description ?? '')}</div>`;
+}
+
+/** A bounty's leaderboard: ranked entries with their scores, handles and titles.
+ * The API puts each entry's scores in `values` (numbers) and `display` (strings), not in a
+ * `scores` object: judge win rates are micro units (956066 means 95.6066%), `bytes` is a byte
+ * count, and `valid` is 1 or 0. The first version of this view read a `scores` field that does
+ * not exist, so every cell showed a dash; this one reads the real fields and formats them. */
+export function leaderboard(data, slug, fromCache) {
+  const entries = data.entries ?? [];
+  const columns = (data.columns ?? []).filter((c) => !c.hidden);
+  const score = (e, key) => {
+    const shown = e.display?.[key];
+    const value = e.values?.[key];
+    if (key === 'valid') return value === 1 || shown === '1' ? '✓' : '—';
+    if (key === 'bytes') {
+      const n = Number(value ?? shown);
+      if (!Number.isFinite(n)) return '—';
+      return n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
+    }
+    if (key === 'judge' || key === 'judge_low' || key === 'judge_high') {
+      const n = Number(value ?? shown);
+      if (!Number.isFinite(n)) return '—';
+      return `${(n / 10000).toFixed(1)}%`;
+    }
+    return shown != null ? esc(shown) : value != null ? esc(value) : '—';
+  };
+  const head = columns.map((c) => `<th scope="col">${esc(c.title)}</th>`).join('');
+  const rows = entries
+    .map((e) => {
+      const cells = columns.map((c) => `<td>${score(e, c.key)}</td>`).join('');
       return `<tr>
-        <td>${rank}</td>
-        <td><a href="#/agent/${encodeURIComponent(agent)}">${esc(agent)}</a></td>
-        <td>${typeof score === 'number' ? score.toLocaleString('en-US') : esc(String(score))}</td>
-        <td>${esc(String(detail))}</td>
+        <td>${num(e.rank)}</td>
+        <td><a href="#/u/${encodeURIComponent(e.handle)}">${esc(e.handle)}</a></td>
+        <td>${esc(e.title ?? '')}</td>
+        ${cells}
       </tr>`;
     })
     .join('');
   return `
-  <p><a href="#/bounty/${encodeURIComponent(slug)}">&larr; ${esc(title)}</a></p>
-  <h1>Leaderboard: ${esc(title)}</h1>
-  <p class="meta">${rows.length ? plural(rows.length, 'ranked entry', 'ranked entries') : 'No ranked entries yet.'}</p>
-  ${rows.length ? `<table>
-    <thead><tr><th scope="col">#</th><th scope="col">Agent</th><th scope="col">Score</th><th scope="col">Detail</th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>` : ''}`;
+    <p><a href="#/bounty/${encodeURIComponent(slug)}">&larr; ${esc(data.competition?.title ?? slug)}</a></p>
+    <h1>Leaderboard</h1>
+    <p class="lede">${esc(data.competition?.title ?? slug)} — ${entries.length} ranked ${entries.length === 1 ? 'entry' : 'entries'}.</p>
+    ${staleNote(fromCache)}
+    <div class="table-wrap"><table>
+      <thead><tr><th scope="col">#</th><th scope="col">Agent</th><th scope="col">Entry</th>${head}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
-/** An agent's public profile: their entries and rankings. */
-export function profile(data, handle) {
-  const entries = data.entries ?? data.submissions ?? [];
-  const rankings = data.rankings ?? [];
-  const name = data.handle ?? data.name ?? handle;
-  const entryRows = entries
-    .map((e) => {
-      const slug = e.competition?.slug ?? e.slug ?? '';
-      const title = e.competition?.title ?? e.title ?? slug;
-      return `<li><a href="#/bounty/${encodeURIComponent(slug)}">${esc(title)}</a>
-        <span>${esc(e.status ?? e.stage ?? '')}</span>
-        <span>${e.created_at ? ago(e.created_at) : ''}</span></li>`;
-    })
-    .join('');
-  const rankRows = rankings
-    .map((r) => `<li><a href="#/bounty/${encodeURIComponent(r.slug ?? '')}">${esc(r.title ?? r.slug ?? '')}</a>
-      <span>#${r.rank ?? '—'}</span></li>`)
+/** An account's public profile: its record and its entries. */
+export function profile(p, fromCache) {
+  const r = p.record ?? {};
+  const rows = (p.solutions ?? [])
+    .map(
+      (s) => `
+      <li>
+        <a href="#/bounty/${encodeURIComponent(s.competition.slug)}">${esc(s.competition.title)}</a>
+        <span>${esc(s.title)}</span>
+        <span>${s.placement ? `#${num(s.placement)}` : 'unplaced'}</span>
+        <span>${s.prize_usd ? money(s.prize_usd) : ''}</span>
+      </li>`,
+    )
     .join('');
   return `
-  <p><a href="#/">&larr; All bounties</a></p>
-  <h1>${esc(name)}</h1>
-  ${data.bio ? `<p class="summary">${esc(data.bio)}</p>` : ''}
-  <h2>Entries (${entries.length})</h2>
-  <ul class="board">${entryRows || '<li class="empty">No entries yet.</li>'}</ul>
-  <h2>Rankings</h2>
-  <ul class="board">${rankRows || '<li class="empty">No rankings yet.</li>'}</ul>`;
+    <h1>${esc(p.display_name ?? p.handle)}</h1>
+    <p class="lede">@${esc(p.handle)}${p.bio ? ` — ${esc(p.bio)}` : ''}</p>
+    ${staleNote(fromCache)}
+    <dl>
+      <dt>Joined</dt><dd>${date(p.joined_at)}</dd>
+      <dt>Entered</dt><dd>${num(r.competitions_entered)} bounties</dd>
+      <dt>Placed</dt><dd>${num(r.competitions_placed)} · won ${num(r.competitions_won)}</dd>
+      <dt>Prize money</dt><dd>${money(r.prize_usd ?? 0)}</dd>
+      ${p.wallet?.address ? `<dt>Wallet</dt><dd><a href="${esc(p.wallet.explorer_url)}">${shortWallet(p.wallet.address)}</a></dd>` : ''}
+      ${p.github_login ? `<dt>GitHub</dt><dd><a href="https://github.com/${encodeURIComponent(p.github_login)}">${esc(p.github_login)}</a></dd>` : ''}
+      ${p.x ? `<dt>X</dt><dd><a href="https://x.com/${encodeURIComponent(p.x)}">@${esc(p.x)}</a></dd>` : ''}
+    </dl>
+    <h2>Entries</h2>
+    ${rows ? `<ul class="board">${rows}</ul>` : '<p>No entries yet.</p>'}`;
 }
 
-/** A loading placeholder while a route fetches. */
-export function loading(label) {
-  return `<p class="loading" role="status">Loading ${esc(label)}…</p>`;
-}
-
-/** A fetch failure, with a retry link that refetches the same route. */
-export function failure(message, href) {
-  return `<h1>Could not load this page</h1>
-  <p>${esc(message)}</p>
-  <p><a class="button" href="${esc(href)}">Retry</a></p>`;
+/** The site-wide rankings: accounts by competitions won or prize money paid.
+ * Each row carries its record nested under `record` (competitions_won, prize_usd); the first
+ * version read those fields off the row itself, so every row showed zeroes. */
+export function rankings(data, by, fromCache) {
+  const rows = (data.items ?? [])
+    .map(
+      (r) => `
+      <li>
+        <span>${num(r.rank)}</span>
+        <a href="#/u/${encodeURIComponent(r.handle)}">${esc(r.display_name ?? r.handle)}</a>
+        <span>${num(r.record?.competitions_won ?? 0)} won</span>
+        <span>${money(r.record?.prize_usd ?? 0)}</span>
+      </li>`,
+    )
+    .join('');
+  return `
+    <h1>Rankings</h1>
+    <p class="lede">${num(data.total ?? 0)} accounts ranked by ${by === 'paid' ? 'prize money paid' : 'competitions won'}.</p>
+    ${staleNote(fromCache)}
+    <p><a href="#/rankings" aria-current="${by === 'wins' ? 'page' : 'false'}">By wins</a> · <a href="#/rankings/paid" aria-current="${by === 'paid' ? 'page' : 'false'}">By prize money</a></p>
+    <ul class="board">${rows}</ul>`;
 }
