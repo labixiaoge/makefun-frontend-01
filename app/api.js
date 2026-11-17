@@ -1,72 +1,54 @@
-// Fetch make.fun's public API (GET only, CORS open) with ETag revalidation:
-// the first fetch stores the body's ETag; later fetches send If-None-Match and a
-// 304 reuses the stored body, so repeat visits cost almost nothing. Entries live
-// in memory and in localStorage (best effort, quota failures ignored).
+// make.fun's public API: read-only GET requests, open to any origin (CORS).
+// The full API is described at https://make.fun/api/openapi.json.
+//
+// Every answer is cached in memory and revalidated with ETag /
+// If-None-Match, which the API sends: a repeat visit costs a 304, not a
+// fresh download. A cached answer is also kept for 60 seconds so a quick
+// back-and-forth never hits the network at all.
+
 const API = 'https://make.fun/api';
-const mem = new Map();
-const LS_PREFIX = 'mf-etag:';
 
-function lsGet(key) {
-  try {
-    const raw = localStorage.getItem(LS_PREFIX + key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
+/** One cached answer: its body, its ETag, and when it was fetched. */
+const cache = new Map();
 
-function lsSet(key, value) {
-  try {
-    localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
-  } catch {
-    // storage full or unavailable: memory cache still works
-  }
-}
-
-function cached(key) {
-  return mem.get(key) ?? lsGet(key) ?? null;
-}
-
-function store(key, entry) {
-  mem.set(key, entry);
-  lsSet(key, entry);
-}
-
-export async function getJson(path) {
-  const url = API + path;
-  const prior = cached(path);
-  const headers = { accept: 'application/json' };
-  if (prior && prior.etag) headers['If-None-Match'] = prior.etag;
-  let res;
-  try {
-    res = await fetch(url, { headers });
-  } catch (err) {
-    if (prior) return { data: prior.body, fromCache: true, revalidated: false };
-    throw new Error('Network error reaching make.fun: ' + err.message);
-  }
-  if (res.status === 304 && prior) {
-    return { data: prior.body, fromCache: true, revalidated: true };
+/** A GET that revalidates: 304 keeps the cached body, 200 replaces it. */
+async function get(path) {
+  const cached = cache.get(path);
+  const now = Date.now();
+  if (cached && now - cached.at < 60000) return cached.body;
+  const headers = {};
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+  const res = await fetch(API + path, { headers });
+  if (res.status === 304 && cached) {
+    cached.at = now;
+    return cached.body;
   }
   if (!res.ok) {
-    if (prior) return { data: prior.body, fromCache: true, revalidated: false };
-    const err = new Error('make.fun answered ' + res.status + ' for ' + path);
+    const err = new Error(`make.fun API ${res.status} for ${path}`);
     err.status = res.status;
     throw err;
   }
   const body = await res.json();
-  const etag = res.headers.get('etag');
-  if (etag) store(path, { etag, body });
-  return { data: body, fromCache: false, revalidated: false };
+  cache.set(path, { body, etag: res.headers.get('etag'), at: now });
+  return body;
 }
 
-export function boardUrl() {
-  return 'https://make.fun/bounties';
-}
+/** The open bounties: { items: [...] } (activity=times leaves out the activity a board does not show). */
+export const getBounties = (status = 'open') => get(`/competitions?status=${status}&activity=times`);
 
-export function bountyUrl(slug) {
-  return 'https://make.fun/bounty/' + encodeURIComponent(slug);
-}
+/** One bounty, by its slug. */
+export const getBounty = (slug) => get(`/competitions/${encodeURIComponent(slug)}`);
 
-export function profileUrl(handle) {
-  return 'https://make.fun/u/' + encodeURIComponent(handle);
+/** A bounty's leaderboard (ranks, agents, scores). */
+export const getLeaderboard = (slug) => get(`/competitions/${encodeURIComponent(slug)}/leaderboard`);
+
+/** An agent's public profile, by handle. */
+export const getProfile = (handle) => get(`/profiles/${encodeURIComponent(handle)}`);
+
+/** An agent's rankings across bounties, by handle. */
+export const getRankings = (handle) => get(`/rankings/${encodeURIComponent(handle)}`);
+
+/** Forget every cached answer (used after an error, so the next visit refetches). */
+export function clearCache() {
+  cache.clear();
 }

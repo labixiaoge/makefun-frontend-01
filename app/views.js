@@ -1,265 +1,178 @@
-// Views for the four surfaces: board, bounty page, leaderboard, profile.
-// Each renders into an element and fetches what it needs through api.js.
-import { getJson, bountyUrl, profileUrl } from './api.js';
-import { esc, money, moneyShort, timeLeft, dateShort, plural, md } from './format.js';
+// The four surfaces, each a function from API data to HTML. All links are
+// plain anchors, so every surface is reachable by a link and by its own URL.
 
-const BOARD_LIMIT = 48;
-const DETAIL_BATCH = 6;
+import { ago, date, esc, money, plural, timeLeft } from './format.js';
 
-function loading(text) {
-  return '<p class="loading" role="status">' + esc(text || 'Loading…') + '</p>';
-}
-
-function errorBox(err) {
-  return '<div class="err" role="alert"><strong>Could not load this page.</strong><br>' +
-    esc(err && err.message ? err.message : String(err)) +
-    '<br><a href="#/">Back to the bounty board</a></div>';
-}
-
-function cardHtml(b) {
-  const slug = esc(b.slug);
-  const desc = (b.description || '').split('\n')[0];
-  const skills = Array.isArray(b.skills) ? b.skills.slice(0, 4) : [];
-  return '<article class="card" data-slug="' + slug + '">' +
-    '<h3><a href="#/bounty/' + slug + '">' + esc(b.title) + '</a></h3>' +
-    (desc ? '<p class="desc">' + esc(desc) + '</p>' : '') +
-    '<div class="stats">' +
-      '<span>Reward <b class="pot" data-pot>' + moneyShort(b.rewardAmount) + '</b></span>' +
-      '<span data-fee>Fee —</span>' +
-      '<span><b>' + esc(timeLeft(b.deadline)) + '</b></span>' +
-      '<span>' + plural(b.submissionCount ?? 0, 'entry') + '</span>' +
-    '</div>' +
-    '<div class="meta">' + esc(b.category || '') + (b.sponsor && b.sponsor.name ? ' · ' + esc(b.sponsor.name) : '') + '</div>' +
-    (skills.length ? '<div class="tags">' + skills.map((s) => '<span class="tag">' + esc(s) + '</span>').join('') + '</div>' : '') +
-    '<div><a class="btn ghost" href="#/bounty/' + slug + '">View bounty</a></div>' +
-    '</article>';
-}
-
-// Fill a card's live pot and entry fee from its detail response.
-function fillCard(card, detail) {
-  const pot = card.querySelector('[data-pot]');
-  if (pot && detail.potUsd != null) pot.textContent = moneyShort(detail.potUsd);
-  const fee = card.querySelector('[data-fee]');
-  if (fee) {
-    fee.textContent = detail.entryFeeUsd != null && Number(detail.entryFeeUsd) > 0
-      ? 'Fee ' + money(detail.entryFeeUsd)
-      : 'Fee free';
-  }
-}
-
-async function fillDetailsInBatches(root, slugs) {
-  for (let i = 0; i < slugs.length; i += DETAIL_BATCH) {
-    const batch = slugs.slice(i, i + DETAIL_BATCH);
-    await Promise.all(batch.map(async (slug) => {
-      const card = root.querySelector('[data-slug="' + slug + '"]');
-      if (!card || !document.contains(card)) return;
-      try {
-        const { data } = await getJson('/competitions/' + encodeURIComponent(slug));
-        if (document.contains(card)) fillCard(card, data);
-      } catch {
-        // leave the list reward in place; the bounty page has the full detail
-      }
-    }));
-  }
-}
-
-export async function renderBoard(root) {
-  root.innerHTML = '<h1 tabindex="-1">Live bounty board</h1>' +
-    '<p class="mut">Open bounties on make.fun, with each reward as its live pot, its entry fee and its time left. Data is fetched live from the public API and revalidated with ETags.</p>' +
-    '<div class="toolbar">' +
-      '<input type="search" id="q" placeholder="Search bounties…" aria-label="Search bounties">' +
-      '<select id="sort" aria-label="Sort bounties">' +
-        '<option value="deadline">Closing soonest</option>' +
-        '<option value="pot">Biggest reward</option>' +
-        '<option value="entries">Most entries</option>' +
-        '<option value="title">Title A–Z</option>' +
-      '</select>' +
-      '<span class="count" id="count" role="status"></span>' +
-    '</div>' +
-    '<div id="board">' + loading('Loading open bounties…') + '</div>';
-  const board = root.querySelector('#board');
-  const count = root.querySelector('#count');
-  const q = root.querySelector('#q');
-  const sort = root.querySelector('#sort');
-  let items = [];
-  let timer = null;
-
-  const apply = () => {
-    const needle = q.value.trim().toLowerCase();
-    let list = items.filter((b) => {
-      if (!needle) return true;
-      const hay = ((b.title || '') + ' ' + (b.description || '') + ' ' + (b.category || '') + ' ' + ((b.skills || []).join(' '))).toLowerCase();
-      return hay.includes(needle);
-    });
-    const key = sort.value;
-    list = list.slice().sort((a, b) => {
-      if (key === 'pot') return (Number(b.rewardAmount) || 0) - (Number(a.rewardAmount) || 0);
-      if (key === 'entries') return (b.submissionCount || 0) - (a.submissionCount || 0);
-      if (key === 'title') return String(a.title).localeCompare(String(b.title));
-      return Date.parse(a.deadline) - Date.parse(b.deadline);
-    });
-    count.textContent = list.length + ' of ' + items.length + ' open';
-    board.innerHTML = list.length
-      ? '<div class="grid">' + list.map(cardHtml).join('') + '</div>'
-      : '<p class="mut">No bounties match that search.</p>';
-    fillDetailsInBatches(board, list.map((b) => b.slug));
-  };
-
-  q.addEventListener('input', apply);
-  sort.addEventListener('change', apply);
-  timer = setInterval(() => {
-    // keep the countdowns honest without refetching
-    board.querySelectorAll('[data-slug]').forEach((card) => {
-      const b = items.find((x) => x.slug === card.getAttribute('data-slug'));
-      if (!b) return;
-      const stats = card.querySelectorAll('.stats span');
-      if (stats.length >= 3) stats[2].innerHTML = '<b>' + esc(timeLeft(b.deadline)) + '</b>';
-    });
-  }, 30000);
-
-  try {
-    const { data } = await getJson('/competitions?status=open&limit=' + BOARD_LIMIT);
-    items = data.items || [];
-    apply();
-  } catch (err) {
-    clearInterval(timer);
-    board.innerHTML = errorBox(err);
-  }
-}
-
-function rewardsTable(rewardsNow, rewardAmount) {
-  if (!Array.isArray(rewardsNow) || !rewardsNow.length) {
-    return '<p class="mut">Reward ' + money(rewardAmount) + ' split over the paid places.</p>';
-  }
-  return '<ul class="rewards">' + rewardsNow.map((r) => {
-    const place = r.place;
-    const label = place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : place + 'th';
-    return '<li><b>' + esc(label) + ' · ' + money(r.amountUsd ?? r.baseUsd) + '</b>' +
-      (r.feeShareUsd != null && Number(r.feeShareUsd) > 0 ? '<span class="mut small">includes ' + money(r.feeShareUsd) + ' from entry fees</span>' : '') +
-      '</li>';
-  }).join('') + '</ul>';
-}
-
-export async function renderBounty(root, slug) {
-  root.innerHTML = '<div id="bounty">' + loading('Loading bounty…') + '</div>';
-  const host = root.querySelector('#bounty');
-  try {
-    const { data: b } = await getJson('/competitions/' + encodeURIComponent(slug));
-    const pot = b.potUsd != null ? money(b.potUsd) : money(b.rewardAmount);
-    const fee = b.entryFeeUsd != null ? money(b.entryFeeUsd) : '—';
-    const skills = Array.isArray(b.skills) ? b.skills : [];
-    host.innerHTML =
-      '<p class="small"><a href="#/">← All bounties</a> · <a href="' + esc(bountyUrl(slug)) + '" rel="noopener">Open on make.fun ↗</a></p>' +
-      '<h1 tabindex="-1">' + esc(b.title) + '</h1>' +
-      '<p class="mut">' + esc(b.category || '') + (b.sponsor && b.sponsor.name ? ' · sponsored by ' + esc(b.sponsor.name) : '') +
-      ' · ' + plural(b.submissionCount ?? 0, 'entry') + ' · status: ' + esc(b.status || 'open') + '</p>' +
-      '<dl class="kv">' +
-        '<div><dt>Live pot</dt><dd class="pot">' + esc(pot) + '</dd></div>' +
-        '<div><dt>Base reward</dt><dd>' + money(b.rewardAmount) + '</dd></div>' +
-        '<div><dt>Entry fee</dt><dd>' + esc(fee) + '</dd></div>' +
-        '<div><dt>Time left</dt><dd>' + esc(timeLeft(b.deadline)) + '</dd></div>' +
-        '<div><dt>Deadline</dt><dd>' + esc(dateShort(b.deadline)) + '</dd></div>' +
-      '</dl>' +
-      '<h2>Rewards</h2>' + rewardsTable(b.rewardsNow, b.rewardAmount) +
-      '<h2>About this bounty</h2><div class="prose">' + md(b.description || '') + '</div>' +
-      (skills.length ? '<h2>Skills</h2><div class="tags">' + skills.map((s) => '<span class="tag">' + esc(s) + '</span>').join('') + '</div>' : '') +
-      '<h2>Leaderboard — top 5</h2><div id="lb-mini">' + loading('Loading leaderboard…') + '</div>' +
-      '<p><a class="btn" href="#/bounty/' + esc(slug) + '/leaderboard">Full leaderboard</a> ' +
-      '<a class="btn ghost" href="' + esc(bountyUrl(slug)) + '" rel="noopener">Enter on make.fun ↗</a></p>';
-    const mini = host.querySelector('#lb-mini');
-    try {
-      const { data: lb } = await getJson('/competitions/' + encodeURIComponent(slug) + '/leaderboard?limit=5');
-      const entries = lb.entries || [];
-      mini.innerHTML = entries.length
-        ? '<div class="tbl-wrap"><table><thead><tr><th>Rank</th><th>Agent</th><th>Entry</th><th class="num">Win rate</th></tr></thead><tbody>' +
-          entries.slice(0, 5).map((e) => '<tr><td>' + esc(e.rank) + '</td><td><a href="#/u/' + esc(e.handle) + '">' + esc(e.handle) + '</a></td><td>' + esc(e.title || '') + '</td><td class="num">' + winRate(e) + '</td></tr>').join('') +
-          '</tbody></table></div>'
-        : '<p class="mut">No ranked entries yet.</p>';
-    } catch {
-      mini.innerHTML = '<p class="mut">Leaderboard is not available right now.</p>';
+/** A bounty description as HTML: escaped first, then the small markdown
+ *  most descriptions use (## headings, - lists, **bold**) is rendered.
+ *  Anything else stays plain text, so no markup can sneak through. */
+function md(text) {
+  const lines = esc(text).split('\n');
+  const out = [];
+  let inList = false;
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+  for (const line of lines) {
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (h) {
+      closeList();
+      const level = Math.min(3, h[1].length) + 1;
+      out.push(`<h${level}>${inline(h[2])}</h${level}>`);
+      continue;
     }
-  } catch (err) {
-    host.innerHTML = errorBox(err);
+    const item = /^[-*]\s+(.*)$/.exec(line);
+    if (item) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push(`<li>${inline(item[1])}</li>`);
+      continue;
+    }
+    closeList();
+    if (line.trim() !== '') out.push(`<p>${inline(line)}</p>`);
   }
+  closeList();
+  return out.join('\n');
 }
 
-export function winRate(entry) {
-  const v = entry && entry.values ? Number(entry.values.judge) : NaN;
-  if (!Number.isFinite(v)) return '—';
-  return (v / 10000).toFixed(1) + '%';
+/** Inline markdown inside one escaped line: **bold** and `code`. */
+function inline(text) {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
-function sizeKb(bytes) {
-  const n = Number(bytes);
-  if (!Number.isFinite(n)) return '—';
-  return (n / 1024).toFixed(0) + ' KB';
+/** The reward as it stands now: the live pot plus any entry fees paid into it. */
+const pot = (b) => money(b.potUsd ?? b.rewardAmount);
+
+/** The entry fee, when the bounty charges one. */
+const fee = (b) => (b.entryFeeUsd ? `${money(b.entryFeeUsd)} fee` : 'free');
+
+/** One board row: title, pot, fee, time left, entries, category. */
+function row(b) {
+  return `<li>
+    <a class="title" href="#/bounty/${encodeURIComponent(b.slug)}">${esc(b.title)}</a>
+    <span class="pot">${pot(b)}</span>
+    <span class="fee">${fee(b)}</span>
+    <span class="left">${timeLeft(b.deadline)}</span>
+    <span class="count">${plural(b.submissionCount ?? 0, 'entry', 'entries')}</span>
+    <span class="cat">${esc(b.category ?? '')}</span>
+  </li>`;
 }
 
-export async function renderLeaderboard(root, slug) {
-  root.innerHTML = '<div id="lb">' + loading('Loading leaderboard…') + '</div>';
-  const host = root.querySelector('#lb');
-  try {
-    const { data: lb } = await getJson('/competitions/' + encodeURIComponent(slug) + '/leaderboard?limit=100');
-    const entries = lb.entries || [];
-    const comp = lb.competition || {};
-    host.innerHTML =
-      '<p class="small"><a href="#/bounty/' + esc(slug) + '">← Back to the bounty</a></p>' +
-      '<h1 tabindex="-1">Leaderboard — ' + esc(comp.title || slug) + '</h1>' +
-      '<p class="mut">' + esc(entries.length) + ' ranked entries · ranked by judge win rate · smaller dossier wins ties.</p>' +
-      (entries.length
-        ? '<div class="tbl-wrap"><table><thead><tr><th>Rank</th><th>Agent</th><th>Entry</th><th class="num">Win rate</th><th class="num">Interval</th><th class="num">Size</th><th>Valid</th></tr></thead><tbody>' +
-          entries.map((e) => {
-            const low = e.values && Number.isFinite(Number(e.values.judge_low)) ? (Number(e.values.judge_low) / 10000).toFixed(1) + '%' : '—';
-            const high = e.values && Number.isFinite(Number(e.values.judge_high)) ? (Number(e.values.judge_high) / 10000).toFixed(1) + '%' : '—';
-            return '<tr><td>' + esc(e.rank) + '</td>' +
-              '<td><a href="#/u/' + esc(e.handle) + '">' + esc(e.handle) + '</a></td>' +
-              '<td>' + esc(e.title || '') + '</td>' +
-              '<td class="num"><b>' + winRate(e) + '</b></td>' +
-              '<td class="num">' + low + ' – ' + high + '</td>' +
-              '<td class="num">' + sizeKb(e.values ? e.values.bytes : null) + '</td>' +
-              '<td>' + (e.values && Number(e.values.valid) === 1 ? 'yes' : '—') + '</td></tr>';
-          }).join('') +
-          '</tbody></table></div>'
-        : '<p class="mut">No ranked entries yet.</p>');
-  } catch (err) {
-    host.innerHTML = errorBox(err);
-  }
+/**
+ * The board. `data` is the competitions list; `opts` carries the current
+ * sort key and the search text, so the view is a pure function of both.
+ */
+export function board(data, opts = {}) {
+  const items = [...(data.items ?? [])];
+  const q = (opts.q ?? '').trim().toLowerCase();
+  const filtered = q
+    ? items.filter((b) => `${b.title} ${b.slug} ${b.category ?? ''} ${b.description ?? ''}`.toLowerCase().includes(q))
+    : items;
+  const sort = opts.sort ?? 'pot';
+  filtered.sort((a, b) => {
+    if (sort === 'deadline') return new Date(a.deadline) - new Date(b.deadline);
+    if (sort === 'entries') return (b.submissionCount ?? 0) - (a.submissionCount ?? 0);
+    return (b.potUsd ?? b.rewardAmount ?? 0) - (a.potUsd ?? a.rewardAmount ?? 0);
+  });
+  const rows = filtered.map(row).join('');
+  return `<h1>Open bounties</h1>
+  <form class="controls" role="search" action="#/" onsubmit="return false">
+    <label>Search <input type="search" name="q" value="${esc(opts.q ?? '')}" placeholder="title, slug or category" aria-label="Search bounties"></label>
+    <label>Sort
+      <select name="sort" aria-label="Sort bounties">
+        <option value="pot"${sort === 'pot' ? ' selected' : ''}>Biggest pot</option>
+        <option value="deadline"${sort === 'deadline' ? ' selected' : ''}>Ending soonest</option>
+        <option value="entries"${sort === 'entries' ? ' selected' : ''}>Most entries</option>
+      </select>
+    </label>
+  </form>
+  <p class="meta">${filtered.length} of ${items.length} open bounties</p>
+  <ul class="board">${rows || '<li class="empty">No bounties match.</li>'}</ul>`;
 }
 
-export async function renderProfile(root, handle) {
-  root.innerHTML = '<div id="prof">' + loading('Loading profile…') + '</div>';
-  const host = root.querySelector('#prof');
-  try {
-    const { data: p } = await getJson('/profiles/' + encodeURIComponent(handle));
-    const rec = p.record || {};
-    const sols = Array.isArray(p.solutions) ? p.solutions : [];
-    const avatar = p.image || p.avatar;
-    host.innerHTML =
-      '<p class="small"><a href="#/">← All bounties</a> · <a href="' + esc(profileUrl(handle)) + '" rel="noopener">Open on make.fun ↗</a></p>' +
-      '<h1 tabindex="-1">' + (avatar ? '<img class="avatar" src="' + esc(avatar) + '" alt="" width="44" height="44"> ' : '') + esc(p.display_name || p.handle) + '</h1>' +
-      '<p class="mut">@' + esc(p.handle) + (p.joined_at ? ' · joined ' + esc(dateShort(p.joined_at)) : '') +
-      (p.wallet && p.wallet.address ? ' · wallet ' + esc(p.wallet.address.slice(0, 6)) + '…' + esc(p.wallet.address.slice(-4)) : '') + '</p>' +
-      (p.bio ? '<p>' + esc(p.bio) + '</p>' : '') +
-      '<dl class="kv">' +
-        '<div><dt>Entered</dt><dd>' + (rec.competitions_entered ?? 0) + '</dd></div>' +
-        '<div><dt>Placed</dt><dd>' + (rec.competitions_placed ?? 0) + '</dd></div>' +
-        '<div><dt>Won</dt><dd>' + (rec.competitions_won ?? 0) + '</dd></div>' +
-        '<div><dt>Best place</dt><dd>' + (rec.best_placement != null ? '#' + rec.best_placement : '—') + '</dd></div>' +
-        '<div><dt>Prize money</dt><dd>' + money(rec.prize_usd) + '</dd></div>' +
-      '</dl>' +
-      '<h2>Entries</h2>' +
-      (sols.length
-        ? '<ul class="sol">' + sols.map((s) => {
-            const c = s.competition || {};
-            return '<li><h3><a href="#/bounty/' + esc(c.slug) + '">' + esc(s.title || c.title || '') + '</a></h3>' +
-              '<div class="row"><span>' + esc(c.title || '') + '</span>' +
-              (s.placement != null ? '<span>placed #' + esc(s.placement) + '</span>' : '') +
-              (s.prize_usd != null ? '<span>won ' + money(s.prize_usd) + '</span>' : '') +
-              (s.score ? '<span>score ' + esc(s.score.display ?? s.score.value) + '</span>' : '') +
-              '<span>' + esc(c.status || '') + '</span></div></li>';
-          }).join('') + '</ul>'
-        : '<p class="mut">No public entries yet.</p>');
-  } catch (err) {
-    host.innerHTML = errorBox(err);
-  }
+/** One bounty: facts, description, and a link to its leaderboard. */
+export function bounty(b) {
+  return `
+  <p><a href="#/">&larr; All bounties</a></p>
+  <h1>${esc(b.title)}</h1>
+  <p class="summary">${esc(b.summary ?? b.description ?? '')}</p>
+  <dl>
+    <dt>Reward</dt><dd>${pot(b)}</dd>
+    ${b.entryFeeUsd ? `<dt>Entry fee</dt><dd>${money(b.entryFeeUsd)}</dd>` : '<dt>Entry fee</dt><dd>Free</dd>'}
+    <dt>Deadline</dt><dd>${date(b.deadline)} (${timeLeft(b.deadline)})</dd>
+    <dt>Entries</dt><dd>${b.submissionCount ?? 0}</dd>
+    ${b.category ? `<dt>Category</dt><dd>${esc(b.category)}</dd>` : ''}
+    ${b.sponsor?.name ? `<dt>Sponsor</dt><dd>${esc(b.sponsor.name)}</dd>` : ''}
+  </dl>
+  <p><a class="button" href="#/bounty/${encodeURIComponent(b.slug)}/leaderboard">Leaderboard &rarr;</a>
+  <a class="button" href="https://make.fun/bounty/${encodeURIComponent(b.slug)}">Open on make.fun &rarr;</a></p>
+  ${b.description ? `<h2>Description</h2><div class="description">${md(b.description)}</div>` : ''}`;
+}
+
+/** A leaderboard table. Rows carry their score under values[rank_key] (usually `judge`) and their entry title. */
+export function leaderboard(data, slug) {
+  const rows = data.rows ?? data.entries ?? data.leaderboard ?? [];
+  const title = data.competition?.title ?? slug;
+  const rankKey = data.rank_key ?? 'judge';
+  const body = rows
+    .map((r, i) => {
+      const rank = r.rank ?? i + 1;
+      const agent = r.agent?.handle ?? r.handle ?? r.agent ?? '—';
+      const score = r.values?.[rankKey] ?? r.values?.judge ?? r.score ?? r.value ?? '';
+      const detail = r.title ?? r.detail ?? r.note ?? '';
+      return `<tr>
+        <td>${rank}</td>
+        <td><a href="#/agent/${encodeURIComponent(agent)}">${esc(agent)}</a></td>
+        <td>${typeof score === 'number' ? score.toLocaleString('en-US') : esc(String(score))}</td>
+        <td>${esc(String(detail))}</td>
+      </tr>`;
+    })
+    .join('');
+  return `
+  <p><a href="#/bounty/${encodeURIComponent(slug)}">&larr; ${esc(title)}</a></p>
+  <h1>Leaderboard: ${esc(title)}</h1>
+  <p class="meta">${rows.length ? plural(rows.length, 'ranked entry', 'ranked entries') : 'No ranked entries yet.'}</p>
+  ${rows.length ? `<table>
+    <thead><tr><th scope="col">#</th><th scope="col">Agent</th><th scope="col">Score</th><th scope="col">Detail</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>` : ''}`;
+}
+
+/** An agent's public profile: their entries and rankings. */
+export function profile(data, handle) {
+  const entries = data.entries ?? data.submissions ?? [];
+  const rankings = data.rankings ?? [];
+  const name = data.handle ?? data.name ?? handle;
+  const entryRows = entries
+    .map((e) => {
+      const slug = e.competition?.slug ?? e.slug ?? '';
+      const title = e.competition?.title ?? e.title ?? slug;
+      return `<li><a href="#/bounty/${encodeURIComponent(slug)}">${esc(title)}</a>
+        <span>${esc(e.status ?? e.stage ?? '')}</span>
+        <span>${e.created_at ? ago(e.created_at) : ''}</span></li>`;
+    })
+    .join('');
+  const rankRows = rankings
+    .map((r) => `<li><a href="#/bounty/${encodeURIComponent(r.slug ?? '')}">${esc(r.title ?? r.slug ?? '')}</a>
+      <span>#${r.rank ?? '—'}</span></li>`)
+    .join('');
+  return `
+  <p><a href="#/">&larr; All bounties</a></p>
+  <h1>${esc(name)}</h1>
+  ${data.bio ? `<p class="summary">${esc(data.bio)}</p>` : ''}
+  <h2>Entries (${entries.length})</h2>
+  <ul class="board">${entryRows || '<li class="empty">No entries yet.</li>'}</ul>
+  <h2>Rankings</h2>
+  <ul class="board">${rankRows || '<li class="empty">No rankings yet.</li>'}</ul>`;
+}
+
+/** A loading placeholder while a route fetches. */
+export function loading(label) {
+  return `<p class="loading" role="status">Loading ${esc(label)}…</p>`;
+}
+
+/** A fetch failure, with a retry link that refetches the same route. */
+export function failure(message, href) {
+  return `<h1>Could not load this page</h1>
+  <p>${esc(message)}</p>
+  <p><a class="button" href="${esc(href)}">Retry</a></p>`;
 }
