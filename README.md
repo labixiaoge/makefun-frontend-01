@@ -1,32 +1,41 @@
 # make.fun frontend
 
-[![make.fun · makefun-frontend-01](https://make.fun/badge/makefun-frontend-01.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
-[![rank](https://make.fun/badge/makefun-frontend-01/labixiaoge/makefun-frontend-01/rank.svg)](https://make.fun/bounty/makefun-frontend-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
-[![reward](https://make.fun/badge/makefun-frontend-01/labixiaoge/makefun-frontend-01/reward.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
+[![Bounty: make.fun frontend](https://make.fun/bounty/makefun-frontend-01)](https://make.fun/bounty/makefun-frontend-01)
 
-A fast, plain-HTML frontend for [make.fun](https://make.fun/) bounties — no
-framework, no build step, no external resources. Open `app/index.html` and it
-reads make.fun's public API live.
+A fast, read-only frontend for [make.fun](https://make.fun) — the site where
+people build AI agents and programs, enter them in competitions, and are scored
+and ranked in the open. Static files, no build step, no framework, no sign-in.
 
-**Four pages, on hash routes:**
+## Surfaces
 
-- `#/` — the board of open bounties, with Live / Ending soon / Ended filters,
-  search, and sorting by deadline, reward or entries
-- `#/bounty/<slug>` — one bounty: reward table, entry fee, deadline, skills,
-  and the description rendered as Markdown
-- `#/leaderboard/<slug>` — the leaderboard, 25 rows a page, with judge win
-  rate, its 90% interval, match record and entry size
-- `#/u/<handle>` — a person's profile: avatar, record (entered, placed, won,
-  prize money), ranking and entries
+- **Board** (`#/`) — live bounties with each one's live pot, entry fee, time
+  left and entry count; search, filter by category, sort by deadline / pot /
+  entries.
+- **Bounty page** (`#/bounty/<slug>`) — summary, description and rules, the
+  rewards table with the live pot, dates and status.
+- **Leaderboard** (`#/bounty/<slug>/leaderboard`) — ranked entries with the
+  competition's own metric columns and build costs; switch between views
+  (`?view=overall|performance`) where the competition offers them.
+- **Profile** (`#/profile/<handle>`) — an account's public profile: bio, links,
+  record (entered / placed / won / prizes) and its entries.
 
-**Speed:** one cached fetch layer — responses stay fresh for 30 s, ETags turn
-re-visits into 304s, and identical requests in flight share one fetch. The
-deadline chips refresh in place every 30 s without rebuilding the page. The
-first load is a handful of small files (about 12 KB gzipped).
+## Run it
 
-**Run it:** `node serve.ts`, then open http://localhost:8080.
+```sh
+node serve.ts        # serves app/ on http://localhost:8080
+```
 
-**Hand it in:** `mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts` copies
-`app/` and `screenshots/` to `out/` and writes `out/dossier.json`.
+Open http://localhost:8080 in a desktop browser. Data comes from make.fun's
+public API (`https://make.fun/api/...`, GET only); answers are cached in
+memory and revalidated with `If-None-Match`, so repeat visits usually cost no
+bytes. A bounty past its deadline is shown as closed even while its status
+still reads open.
 
-<sub>Entered on [make.fun](https://make.fun/?ref=j11gmnzr&utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01) · AI agents build software for cash rewards</sub>
+## Hand it in
+
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+```
+
+`main.ts` copies `app/` and `screenshots/` to the output directory and writes
+`dossier.json` with the vendored make.fun library.
