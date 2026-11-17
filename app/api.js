@@ -1,68 +1,52 @@
 // make.fun's public API: read-only GET requests, open to any origin (CORS).
-// The full API is described at https://make.fun/api/openapi.json.
+// Full API description: https://make.fun/api/openapi.json
 //
-// Every request goes through one cache: a response stays fresh for 30 s,
-// an ETag answer of 304 reuses the stored body, and identical requests in
-// flight share a single fetch, so a re-visit inside the minute costs one
-// conditional request at most and a re-render costs nothing.
+// Caching: every answer is kept in memory with its ETag. A fresh answer (under
+// 60 s old) is reused without a request; an older one is revalidated with
+// If-None-Match, and the API's minute-bound ETags answer 304 while the minute
+// holds, so a re-render usually costs no bytes at all.
 
 const API = 'https://make.fun/api';
-const FRESH_MS = 30_000;
+const FRESH_MS = 60_000;
 
-/** url -> { at, etag, body } of the last good answer. */
+// url -> { etag, body, at }
 const cache = new Map();
-/** url -> the fetch already running for it. */
-const inflight = new Map();
 
 async function get(path) {
   const url = API + path;
-  const now = Date.now();
   const hit = cache.get(url);
-  if (hit && now - hit.at < FRESH_MS) return hit.body;
-  if (inflight.has(url)) return inflight.get(url);
-  const job = (async () => {
-    const headers = {};
-    if (hit?.etag) headers['if-none-match'] = hit.etag;
-    let res;
-    try {
-      res = await fetch(url, { headers });
-    } catch (err) {
-      throw new Error(`could not reach make.fun (${err.message})`);
-    }
-    if (res.status === 304 && hit) {
-      hit.at = now;
-      return hit.body;
-    }
-    if (!res.ok) {
-      const err = new Error(`make.fun answered ${res.status}`);
-      err.status = res.status;
-      throw err;
-    }
-    const etag = res.headers.get('etag');
-    const body = await res.json();
-    cache.set(url, { at: now, etag, body });
-    return body;
-  })();
-  inflight.set(url, job);
-  try {
-    return await job;
-  } finally {
-    inflight.delete(url);
+  if (hit && Date.now() - hit.at < FRESH_MS) return hit.body;
+  const headers = {};
+  if (hit?.etag) headers['If-None-Match'] = hit.etag;
+  const res = await fetch(url, { headers });
+  if (res.status === 304 && hit) {
+    hit.at = Date.now();
+    return hit.body;
   }
+  if (!res.ok) throw new Error(`make.fun API ${res.status} for ${path}`);
+  const body = await res.json();
+  cache.set(url, { etag: res.headers.get('etag'), body, at: Date.now() });
+  return body;
 }
 
-/** The open bounties: { items: [...] } (activity=times leaves out the activity a board does not show). */
-export const getBounties = () => get('/competitions?status=open&activity=times');
+/** The live bounties: { items: [...] }. activity=times keeps the payload small. */
+export function getBounties() {
+  return get('/competitions?status=open&activity=times');
+}
 
-/** One bounty, by its slug. */
-export const getBounty = (slug) => get(`/competitions/${encodeURIComponent(slug)}`);
+/** One bounty, by its slug, with rewards, phases, rules and description. */
+export function getBounty(slug) {
+  return get(`/competitions/${encodeURIComponent(slug)}`);
+}
 
-/** A bounty's leaderboard: { competition, phase, view, views, columns, entries }. */
-export const getLeaderboard = (slug, view = 'performance') =>
-  get(`/competitions/${encodeURIComponent(slug)}/leaderboard?view=${encodeURIComponent(view)}`);
+/** A bounty's leaderboard: columns, views and ranked entries. */
+export function getLeaderboard(slug, view, limit = 50) {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (view) query.set('view', view);
+  return get(`/competitions/${encodeURIComponent(slug)}/leaderboard?${query}`);
+}
 
-/** A person's public profile, by handle. */
-export const getProfile = (handle) => get(`/profiles/${encodeURIComponent(handle)}`);
-
-/** A person's ranking summary, by handle. */
-export const getRankings = (handle) => get(`/rankings/${encodeURIComponent(handle)}`);
+/** An account's public profile: record, bio, links and solutions. */
+export function getProfile(handle) {
+  return get(`/profiles/${encodeURIComponent(handle)}`);
+}
