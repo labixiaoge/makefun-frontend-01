@@ -1,93 +1,89 @@
-// Formatting helpers: money, dates, countdowns and numbers for the make.fun frontend.
-// Everything here is pure and dependency-free, so the views stay small and fast.
-
-/** Text made safe to put inside HTML. */
+// Small formatting helpers, no dependencies.
 export function esc(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-/** A dollar amount (number or numeric string) as "$1,000" or "$0.50". */
 export function money(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
-    maximumFractionDigits: 2,
-  });
+  return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
-/** Micro-USD (a decimal string, as the API returns costs) as "$12.34". */
-export function microUsd(value) {
+export function moneyShort(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
-  return money(n / 1_000_000);
+  if (n >= 1000) return '$' + (n / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'k';
+  return money(n);
 }
 
-/** A large count as "13,066" or, past a million, "1.2M". */
-export function count(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}k`;
-  return n.toLocaleString('en-US');
+export function timeLeft(deadline) {
+  const end = Date.parse(deadline);
+  if (!Number.isFinite(end)) return '—';
+  let ms = end - Date.now();
+  if (ms <= 0) return 'closed';
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return min + 'm left';
+  const h = Math.floor(min / 60);
+  if (h < 48) return h + 'h ' + (min % 60) + 'm left';
+  const d = Math.floor(h / 24);
+  return d + 'd ' + (h % 24) + 'h left';
 }
 
-/** "1 entry" / "13,066 entries" — exact counts, never rounded. */
-export function entries(n) {
-  const num = Number(n);
-  if (!Number.isFinite(num)) return '—';
-  return `${num.toLocaleString('en-US')} ${num === 1 ? 'entry' : 'entries'}`;
+export function dateShort(value) {
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return '—';
+  return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/** An ISO date as "Nov 24, 2026, 5:00 PM UTC". */
-export function date(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return `${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })} UTC`;
+export function plural(n, word) {
+  return n + ' ' + word + (n === 1 ? '' : 's');
 }
 
-/** An ISO date as "Nov 24, 2026". */
-export function shortDate(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', { dateStyle: 'medium', timeZone: 'UTC' });
-}
-
-/** Milliseconds until a deadline, negative once it has passed. */
-export function msLeft(iso) {
-  return new Date(iso).getTime() - Date.now();
-}
-
-/** "2d 4h left", "35m left", "12s left", or "ended". */
-export function timeLeft(iso) {
-  const ms = msLeft(iso);
-  if (ms <= 0) return 'ended';
-  const days = Math.floor(ms / 86400000);
-  const hours = Math.floor((ms % 86400000) / 3600000);
-  const minutes = Math.floor((ms % 3600000) / 60000);
-  const seconds = Math.floor((ms % 60000) / 1000);
-  if (days > 0) return `${days}d ${hours}h left`;
-  if (hours > 0) return `${hours}h ${minutes}m left`;
-  if (minutes > 0) return `${minutes}m ${seconds}s left`;
-  return `${seconds}s left`;
-}
-
-/** "3 days ago" / "in 2 hours" for a past or future timestamp. */
-export function relative(iso) {
-  const ms = new Date(iso).getTime() - Date.now();
-  const abs = Math.abs(ms);
-  const mins = Math.floor(abs / 60000);
-  const hours = Math.floor(abs / 3600000);
-  const days = Math.floor(abs / 86400000);
-  const phrase = days > 0 ? `${days}d` : hours > 0 ? `${hours}h` : mins > 0 ? `${mins}m` : 'just now';
-  if (phrase === 'just now') return phrase;
-  return ms < 0 ? `${phrase} ago` : `in ${phrase}`;
-}
-
-/** Truncate a long string (a wallet address, a hash) in the middle. */
-export function truncate(value, head = 8, tail = 6) {
-  const s = String(value ?? '');
-  return s.length > head + tail + 3 ? `${s.slice(0, head)}…${s.slice(-tail)}` : s;
+// Render a small slice of Markdown (headings, bold, code, links, lists, paragraphs)
+// for bounty descriptions. Escapes everything first, then restores markup.
+export function md(text) {
+  const lines = String(text ?? '').split('\n');
+  let html = '';
+  let list = null;
+  const inline = (s) => {
+    let out = esc(s);
+    out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
+    return out;
+  };
+  const closeList = () => {
+    if (list) {
+      html += list === 'ul' ? '</ul>' : '</ol>';
+      list = null;
+    }
+  };
+  for (const line of lines) {
+    const m = line.match(/^(#{1,3})\s+(.*)$/);
+    const ul = line.match(/^[-*]\s+(.*)$/);
+    const ol = line.match(/^\d+[.)]\s+(.*)$/);
+    if (m) {
+      closeList();
+      const level = m[1].length + 1;
+      html += '<h' + level + '>' + inline(m[2]) + '</h' + level + '>';
+    } else if (ul) {
+      if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; }
+      html += '<li>' + inline(ul[1]) + '</li>';
+    } else if (ol) {
+      if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; }
+      html += '<li>' + inline(ol[1]) + '</li>';
+    } else if (line.trim() === '') {
+      closeList();
+    } else {
+      closeList();
+      html += '<p>' + inline(line) + '</p>';
+    }
+  }
+  closeList();
+  return html;
 }

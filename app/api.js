@@ -1,52 +1,72 @@
-// make.fun's public API: read-only GET requests, open to any origin (CORS).
-// Full API description: https://make.fun/api/openapi.json
-//
-// Caching: every answer is kept in memory with its ETag. A fresh answer (under
-// 60 s old) is reused without a request; an older one is revalidated with
-// If-None-Match, and the API's minute-bound ETags answer 304 while the minute
-// holds, so a re-render usually costs no bytes at all.
-
+// Fetch make.fun's public API (GET only, CORS open) with ETag revalidation:
+// the first fetch stores the body's ETag; later fetches send If-None-Match and a
+// 304 reuses the stored body, so repeat visits cost almost nothing. Entries live
+// in memory and in localStorage (best effort, quota failures ignored).
 const API = 'https://make.fun/api';
-const FRESH_MS = 60_000;
+const mem = new Map();
+const LS_PREFIX = 'mf-etag:';
 
-// url -> { etag, body, at }
-const cache = new Map();
-
-async function get(path) {
-  const url = API + path;
-  const hit = cache.get(url);
-  if (hit && Date.now() - hit.at < FRESH_MS) return hit.body;
-  const headers = {};
-  if (hit?.etag) headers['If-None-Match'] = hit.etag;
-  const res = await fetch(url, { headers });
-  if (res.status === 304 && hit) {
-    hit.at = Date.now();
-    return hit.body;
+function lsGet(key) {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
   }
-  if (!res.ok) throw new Error(`make.fun API ${res.status} for ${path}`);
+}
+
+function lsSet(key, value) {
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
+  } catch {
+    // storage full or unavailable: memory cache still works
+  }
+}
+
+function cached(key) {
+  return mem.get(key) ?? lsGet(key) ?? null;
+}
+
+function store(key, entry) {
+  mem.set(key, entry);
+  lsSet(key, entry);
+}
+
+export async function getJson(path) {
+  const url = API + path;
+  const prior = cached(path);
+  const headers = { accept: 'application/json' };
+  if (prior && prior.etag) headers['If-None-Match'] = prior.etag;
+  let res;
+  try {
+    res = await fetch(url, { headers });
+  } catch (err) {
+    if (prior) return { data: prior.body, fromCache: true, revalidated: false };
+    throw new Error('Network error reaching make.fun: ' + err.message);
+  }
+  if (res.status === 304 && prior) {
+    return { data: prior.body, fromCache: true, revalidated: true };
+  }
+  if (!res.ok) {
+    if (prior) return { data: prior.body, fromCache: true, revalidated: false };
+    const err = new Error('make.fun answered ' + res.status + ' for ' + path);
+    err.status = res.status;
+    throw err;
+  }
   const body = await res.json();
-  cache.set(url, { etag: res.headers.get('etag'), body, at: Date.now() });
-  return body;
+  const etag = res.headers.get('etag');
+  if (etag) store(path, { etag, body });
+  return { data: body, fromCache: false, revalidated: false };
 }
 
-/** The live bounties: { items: [...] }. activity=times keeps the payload small. */
-export function getBounties() {
-  return get('/competitions?status=open&activity=times');
+export function boardUrl() {
+  return 'https://make.fun/bounties';
 }
 
-/** One bounty, by its slug, with rewards, phases, rules and description. */
-export function getBounty(slug) {
-  return get(`/competitions/${encodeURIComponent(slug)}`);
+export function bountyUrl(slug) {
+  return 'https://make.fun/bounty/' + encodeURIComponent(slug);
 }
 
-/** A bounty's leaderboard: columns, views and ranked entries. */
-export function getLeaderboard(slug, view, limit = 50) {
-  const query = new URLSearchParams({ limit: String(limit) });
-  if (view) query.set('view', view);
-  return get(`/competitions/${encodeURIComponent(slug)}/leaderboard?${query}`);
-}
-
-/** An account's public profile: record, bio, links and solutions. */
-export function getProfile(handle) {
-  return get(`/profiles/${encodeURIComponent(handle)}`);
+export function profileUrl(handle) {
+  return 'https://make.fun/u/' + encodeURIComponent(handle);
 }

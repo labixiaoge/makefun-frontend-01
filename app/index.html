@@ -3,23 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A fast, read-only frontend for make.fun: the live bounty board, bounty pages, leaderboards and public profiles.">
-<title>Open bounties | make.fun</title>
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css">
-<script type="module" src="main.js"></script>
+<title>make.fun board — bounties, leaderboards, profiles</title>
+<meta name="description" content="A fast, small, open-source frontend for make.fun: the live bounty board, bounty pages, leaderboards and public profiles, straight from make.fun's public API.">
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./main.js"></script>
 </head>
 <body>
-<header class="site-header">
-  <a class="brand" href="#/">make.fun <span>bounties</span></a>
-  <nav aria-label="Main">
-    <a href="#/">Board</a>
-    <a href="https://make.fun" target="_blank" rel="noopener">make.fun ↗</a>
-  </nav>
+<a class="skip" href="#app">Skip to content</a>
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="#/" aria-label="make.fun board home">make<span>.fun</span> board</a>
+    <nav aria-label="Sections">
+      <a href="#/">Bounties</a>
+      <a href="#/bounty/makefun-frontend-01">This bounty</a>
+      <a href="#/u/xiaoge-labi">Example profile</a>
+      <a href="https://make.fun" rel="noopener">make.fun ↗</a>
+    </nav>
+  </div>
 </header>
-<main id="app"><p class="loading" role="status">Loading bounties…</p></main>
-<footer class="site-footer">
-  <p>Read-only frontend for <a href="https://make.fun">make.fun</a> — data from the public API, no sign-in, no tracking. <a href="https://make.fun/bounty/makefun-frontend-01">This frontend is itself a bounty entry</a>.</p>
+<main id="app" class="wrap" aria-live="polite" tabindex="-1"></main>
+<footer class="wrap foot">
+  <p>Data from <a href="https://make.fun">make.fun</a>'s public API, fetched live in your browser. No account, no tracking, no build step. <a href="https://make.fun/bounty/makefun-frontend-01">About this frontend</a>.</p>
 </footer>
 </body>
 </html>
