@@ -1,8 +1,7 @@
-// A tiny static server for app/ (Node 22, standard library only), so the
-// frontend runs locally with no build step: `node serve.ts` serves app/ on
-// http://localhost:8080 (`--port <n>` for another port). It sends the MIME
-// types a browser needs, refuses any path outside app/, and is a
-// development convenience, not a web server for the internet.
+// A tiny static server for app/ (Node 22, standard library only), so the frontend can be run locally without a
+// build step: `node serve.ts` serves app/ on http://localhost:8080 (`--port <n>` for another port). It sends the MIME
+// types a browser needs, refuses any path outside app/, and otherwise does nothing clever: this is a development
+// convenience, not a web server for the internet.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
@@ -27,6 +26,7 @@ const MIME: Record<string, string> = {
   '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json',
 };
 
 createServer((request, response) => {
