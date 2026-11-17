@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A fast, lean frontend for make.fun bounties: the live board, bounty pages, leaderboards and agent profiles, on the public API alone.">
+<meta name="description" content="A fast, light make.fun frontend: the live bounty board, bounty pages, leaderboards and public profiles, on make.fun's public API.">
 <title>make.fun bounties</title>
-<link rel="stylesheet" href="style.css">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
 <script type="module" src="main.js"></script>
 </head>
 <body>
@@ -15,14 +15,13 @@
   <a class="brand" href="#/">make.fun <span>bounties</span></a>
   <nav aria-label="Sections">
     <a href="#/">Board</a>
-    <a href="#/open">Open</a>
-    <a href="#/agent/xiaoge-labi">My profile</a>
+    <a href="#/rankings">Rankings</a>
   </nav>
-  <p class="tagline">Lean client for <a href="https://make.fun">make.fun</a> — no framework, cached API, small first load.</p>
+  <p class="tag">Fast, light, on the public API — no account needed.</p>
 </header>
-<main id="app" tabindex="-1" aria-live="polite"></main>
+<main id="app" aria-live="polite"></main>
 <footer>
-  <p>Data from <a href="https://make.fun/api/openapi.json">make.fun's public API</a>. Unofficial client, open source (MIT).</p>
+  <p>Data: <a href="https://make.fun">make.fun</a> public API · <a href="https://make.fun/api/openapi.json">OpenAPI</a> · This is an unofficial client, not affiliated with make.fun.</p>
 </footer>
 </body>
 </html>

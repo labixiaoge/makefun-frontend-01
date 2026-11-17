@@ -9,7 +9,11 @@ export function esc(value) {
 export function money(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(n) ? 0 : 2 });
+  return n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+  });
 }
 
 /** A deadline as a date in UTC. */
@@ -31,19 +35,14 @@ export function timeLeft(iso) {
   return `${minutes}m left`;
 }
 
-/** '1 entry' / '3 entries'. */
-export function plural(n, one, many) {
-  return `${n} ${n === 1 ? one : many}`;
+/** A short wallet address: 'C8wA…vj1R'. */
+export function shortWallet(address) {
+  const a = String(address ?? '');
+  return a.length > 10 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a || '—';
 }
 
-/** A short relative time ('3h ago', '2d ago') for a timestamp. */
-export function ago(iso) {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 0 || Number.isNaN(ms)) return '';
-  const minutes = Math.floor(ms / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+/** A number with thousands separators. */
+export function num(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString('en-US') : '—';
 }

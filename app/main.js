@@ -1,103 +1,90 @@
-// A make.fun frontend: board, bounty page, leaderboard and agent profile,
-// on hash routes so every surface has its own URL.
+// A make.fun frontend: the board of open bounties, a page for each bounty, its leaderboard,
+// and an account's public profile, on hash routes.
 //
 //   #/                          the board
 //   #/bounty/<slug>             one bounty
-//   #/bounty/<slug>/leaderboard its leaderboard
-//   #/agent/<handle>            an agent's public profile
+//   #/bounty/<slug>/leaderboard that bounty's leaderboard
+//   #/u/<handle>                an account's public profile
+//   #/rankings                  the site-wide rankings (by wins; #/rankings/paid by prize money)
 //
-// window.__shotReady is false while a page loads and true once its data is
-// on screen, so a screenshot script knows when to capture. After each
-// route renders, focus moves to the page heading, so keyboard and
-// screen-reader users land on the new content.
+// window.__shotReady is false while a page loads and true once its data is on screen, so a
+// screenshot script knows when to capture. The board refreshes every 60 seconds with the
+// API's ETag revalidation, so a repeat fetch costs nothing when nothing changed.
 
-import { clearCache, getBounties, getBounty, getLeaderboard, getProfile, getRankings } from './api.js';
-import { board, bounty, failure, leaderboard, loading, profile } from './views.js';
+import { getBounties, getBounty, getLeaderboard, getProfile, getRankings } from './api.js';
+import { board, bounty, leaderboard, profile, rankings } from './views.js';
 
 const app = document.getElementById('app');
-let currentSearch = '';
-let currentSort = 'pot';
+let refreshTimer = 0;
 
-/** Move focus to the page heading after a route renders, so keyboard and
- *  screen-reader users land on the new content. Only the heading takes
- *  focus: the main landmark never shows a focus ring. */
-function focusHeading() {
-  const h1 = app.querySelector('h1');
-  if (h1) {
-    h1.setAttribute('tabindex', '-1');
-    h1.focus({ preventScroll: true });
-  }
+function loading(message) {
+  app.innerHTML = `<p role="status">${message}</p>`;
+}
+
+function failed(err) {
+  app.innerHTML = `<p role="alert">Could not load this page: ${err.message}. <a href="#/">Back to the board</a></p>`;
+  window.__shotReady = true;
+}
+
+function wireBoardFilter() {
+  const input = document.getElementById('filter');
+  const list = document.getElementById('board');
+  if (!input || !list) return;
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    for (const li of list.children) {
+      li.style.display = q && !li.textContent.toLowerCase().includes(q) ? 'none' : '';
+    }
+  });
 }
 
 async function render() {
   window.__shotReady = false;
+  window.clearTimeout(refreshTimer);
   const hash = location.hash || '#/';
-  const bountyMatch = hash.match(/^#\/bounty\/([^/]+)(?:\/(leaderboard))?$/);
-  const agentMatch = hash.match(/^#\/agent\/([^/]+)$/);
   try {
-    if (bountyMatch) {
-      const slug = decodeURIComponent(bountyMatch[1]);
-      if (bountyMatch[2] === 'leaderboard') {
-        app.innerHTML = loading('leaderboard');
-        const data = await getLeaderboard(slug);
-        document.title = `Leaderboard | ${data.competition?.title ?? slug} | make.fun bounties`;
-        app.innerHTML = leaderboard(data, slug);
-      } else {
-        app.innerHTML = loading('bounty');
-        const b = await getBounty(slug);
-        document.title = `${b.title} | make.fun bounties`;
-        app.innerHTML = bounty(b);
-      }
-    } else if (agentMatch) {
-      const handle = decodeURIComponent(agentMatch[1]);
-      app.innerHTML = loading('profile');
-      const [prof, ranks] = await Promise.all([
-        getProfile(handle).catch(() => ({ handle })),
-        getRankings(handle).catch(() => ({ rankings: [] })),
-      ]);
-      document.title = `${prof.handle ?? handle} | make.fun bounties`;
-      app.innerHTML = profile({ ...prof, rankings: ranks.rankings ?? ranks }, handle);
+    let match;
+    if ((match = hash.match(/^#\/bounty\/([^/]+)\/leaderboard$/))) {
+      const slug = decodeURIComponent(match[1]);
+      loading('Loading the leaderboard…');
+      const { data, fromCache } = await getLeaderboard(slug);
+      document.title = `Leaderboard · ${data.competition?.title ?? slug} | make.fun bounties`;
+      app.innerHTML = leaderboard(data, slug, fromCache);
+    } else if ((match = hash.match(/^#\/bounty\/([^/]+)$/))) {
+      const slug = decodeURIComponent(match[1]);
+      loading('Loading the bounty…');
+      const { data, fromCache } = await getBounty(slug);
+      document.title = `${data.title} | make.fun bounties`;
+      app.innerHTML = bounty(data, fromCache);
+    } else if ((match = hash.match(/^#\/u\/([^/]+)$/))) {
+      const handle = decodeURIComponent(match[1]);
+      loading('Loading the profile…');
+      const { data, fromCache } = await getProfile(handle);
+      document.title = `@${data.handle} | make.fun bounties`;
+      app.innerHTML = profile(data, fromCache);
+    } else if ((match = hash.match(/^#\/rankings(?:\/(paid))?$/))) {
+      const order = match[1] === 'paid' ? 'paid' : 'wins';
+      loading('Loading the rankings…');
+      const { data, fromCache } = await getRankings(order);
+      document.title = 'Rankings | make.fun bounties';
+      app.innerHTML = rankings(data, order, fromCache);
     } else {
-      app.innerHTML = loading('bounties');
-      const data = await getBounties();
+      loading('Loading the board…');
+      const { data, fromCache } = await getBounties();
       document.title = 'make.fun bounties';
-      app.innerHTML = board(data, { q: currentSearch, sort: currentSort });
-      const search = app.querySelector('input[name="q"]');
-      const sort = app.querySelector('select[name="sort"]');
-      if (search) {
-        search.addEventListener('input', () => {
-          currentSearch = search.value;
-          const pos = search.selectionStart;
-          app.innerHTML = board(data, { q: currentSearch, sort: currentSort });
-          const next = app.querySelector('input[name="q"]');
-          if (next) {
-            next.focus();
-            next.setSelectionRange(pos, pos);
-          }
-          wireBoard(data);
-        });
-      }
-      wireBoard(data);
+      app.innerHTML = board(data, fromCache);
+      wireBoardFilter();
+      // Keep the board fresh without re-downloading what did not change.
+      refreshTimer = window.setTimeout(() => {
+        if ((location.hash || '#/') === '#/') render();
+      }, 60000);
     }
   } catch (err) {
-    clearCache();
-    document.title = 'Error | make.fun bounties';
-    app.innerHTML = failure(err.message || 'The make.fun API did not answer.', hash);
+    failed(err);
+    return;
   }
   window.scrollTo(0, 0);
-  focusHeading();
   window.__shotReady = true;
-}
-
-/** Wire the board's sort control after a render (the search input wires itself). */
-function wireBoard(data) {
-  const sort = app.querySelector('select[name="sort"]');
-  if (!sort) return;
-  sort.addEventListener('change', () => {
-    currentSort = sort.value;
-    app.innerHTML = board(data, { q: currentSearch, sort: currentSort });
-    wireBoard(data);
-  });
 }
 
 window.addEventListener('hashchange', render);

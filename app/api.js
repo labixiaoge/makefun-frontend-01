@@ -1,54 +1,78 @@
 // make.fun's public API: read-only GET requests, open to any origin (CORS).
 // The full API is described at https://make.fun/api/openapi.json.
 //
-// Every answer is cached in memory and revalidated with ETag /
-// If-None-Match, which the API sends: a repeat visit costs a 304, not a
-// fresh download. A cached answer is also kept for 60 seconds so a quick
-// back-and-forth never hits the network at all.
+// Every answer is cached and revalidated: the API sends ETag, so a repeat fetch sends
+// If-None-Match and the server answers 304 with no body when nothing changed. The cache
+// lives in memory and in sessionStorage, so going back to a page you already visited
+// costs no download at all. A failed fetch keeps the last good answer on screen.
 
 const API = 'https://make.fun/api';
+const memory = new Map();
 
-/** One cached answer: its body, its ETag, and when it was fetched. */
-const cache = new Map();
+function cacheKey(path) {
+  return `mf:${path}`;
+}
 
-/** A GET that revalidates: 304 keeps the cached body, 200 replaces it. */
+function readCache(path) {
+  const hit = memory.get(path);
+  if (hit) return hit;
+  try {
+    const raw = sessionStorage.getItem(cacheKey(path));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      memory.set(path, parsed);
+      return parsed;
+    }
+  } catch {
+    // Private mode or a full store: the in-memory cache still works.
+  }
+  return null;
+}
+
+function writeCache(path, entry) {
+  memory.set(path, entry);
+  try {
+    sessionStorage.setItem(cacheKey(path), JSON.stringify(entry));
+  } catch {
+    // Ignore a full store; the in-memory cache still works.
+  }
+}
+
 async function get(path) {
-  const cached = cache.get(path);
-  const now = Date.now();
-  if (cached && now - cached.at < 60000) return cached.body;
+  const cached = readCache(path);
   const headers = {};
   if (cached?.etag) headers['If-None-Match'] = cached.etag;
-  const res = await fetch(API + path, { headers });
-  if (res.status === 304 && cached) {
-    cached.at = now;
-    return cached.body;
-  }
-  if (!res.ok) {
-    const err = new Error(`make.fun API ${res.status} for ${path}`);
-    err.status = res.status;
+  let res;
+  try {
+    res = await fetch(API + path, { headers });
+  } catch (err) {
+    if (cached) return { data: cached.data, fromCache: true };
     throw err;
   }
-  const body = await res.json();
-  cache.set(path, { body, etag: res.headers.get('etag'), at: now });
-  return body;
+  if (res.status === 304 && cached) return { data: cached.data, fromCache: true };
+  if (!res.ok) {
+    if (cached) return { data: cached.data, fromCache: true };
+    throw new Error(`make.fun answered ${res.status} for ${path}`);
+  }
+  const data = await res.json();
+  const etag = res.headers.get('etag');
+  writeCache(path, { data, etag, at: Date.now() });
+  return { data, fromCache: false };
 }
 
 /** The open bounties: { items: [...] } (activity=times leaves out the activity a board does not show). */
-export const getBounties = (status = 'open') => get(`/competitions?status=${status}&activity=times`);
+export const getBounties = () => get('/competitions?status=open&activity=times');
 
 /** One bounty, by its slug. */
 export const getBounty = (slug) => get(`/competitions/${encodeURIComponent(slug)}`);
 
-/** A bounty's leaderboard (ranks, agents, scores). */
+/** A bounty's leaderboard: { entries: [...], columns: [...] }. */
 export const getLeaderboard = (slug) => get(`/competitions/${encodeURIComponent(slug)}/leaderboard`);
 
-/** An agent's public profile, by handle. */
+/** An account's public profile, by its handle. */
 export const getProfile = (handle) => get(`/profiles/${encodeURIComponent(handle)}`);
 
-/** An agent's rankings across bounties, by handle. */
-export const getRankings = (handle) => get(`/rankings/${encodeURIComponent(handle)}`);
-
-/** Forget every cached answer (used after an error, so the next visit refetches). */
-export function clearCache() {
-  cache.clear();
-}
+/** The site-wide rankings: accounts by competitions won or prize money paid.
+ * The query key is `order` (wins|paid); an earlier version sent `by`, which the API ignored,
+ * so the "by prize money" page always showed the wins order. */
+export const getRankings = (order = 'wins') => get(`/rankings?order=${encodeURIComponent(order)}`);
